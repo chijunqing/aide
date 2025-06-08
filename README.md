@@ -1,101 +1,64 @@
-# 智能小助手 (Intelligent Assistant)
+# .
 
-一个集成了多种AI能力的智能工作助手，旨在提升工作效率和用户体验。
+This template should help get you started developing with Vue 3 in Vite.
 
-## 主要功能模块
+## Recommended IDE Setup
 
-### 0. 用户登录 & 工作台
-- 用户身份认证
-- 个人信息管理
-- 功能模块统一入口
+[VSCode](https://code.visualstudio.com/) + [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
 
-### 1. 文档智能助手
-- Word转PDF
-- Excel分析与表格处理
-- 文档格式转换
-- 智能文档操作
+## Type Support for `.vue` Imports in TS
 
-### 2. 智能邮件助手
-- 邮件自动分类
-- 重点内容识别
-- 智能写作与回复
-- 邮件情绪分析
+TypeScript cannot handle type information for `.vue` imports by default, so we replace the `tsc` CLI with `vue-tsc` for type checking. In editors, we need [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) to make the TypeScript language service aware of `.vue` types.
 
-### 3. 个人知识库管理
-- 智能笔记提取
-- 知识图谱构建
-- 个性化推荐
-- 学习进度追踪
+## Customize configuration
 
-### 4. 智能工作规划
-- 任务自动拆解
-- 智能计划制定
-- 风险预测
-- 优化建议
+See [Vite Configuration Reference](https://vite.dev/config/).
 
-### 5. 会议智能助理
-- 实时会议转写
-- 会议纪要生成
-- 重点内容提炼
-- 行动项追踪
+## Project Setup
 
-### 6. 情绪与健康关怀
-- 情绪识别
-- 心理疏导建议
-- 健康提醒
-- 工作生活平衡建议
-
-### 7. 创意辅助
-- 报告自动生成
-- 邮件智能写作
-- PPT智能制作
-- 文案创作辅助
-
-### 8. 翻译助手
-- 多语言文档翻译
-- 实时语句翻译
-- 邮件翻译
-
-### 9. 智能出行
-- 机票查询预订
-- 火车票查询预订
-- 智能行程推荐
-
-## 技术栈
-
-- React 18
-- TypeScript
-- Ant Design
-- Material-UI
-- Vite
-- Zustand (状态管理)
-
-## 开发环境设置
-
-1. 安装依赖：
-```bash
+```sh
 npm install
 ```
 
-2. 启动开发服务器：
-```bash
+### Compile and Hot-Reload for Development
+
+```sh
 npm run dev
 ```
 
-3. 构建生产版本：
-```bash
+### Type-Check, Compile and Minify for Production
+
+```sh
 npm run build
 ```
 
-## 项目结构
+### Run Unit Tests with [Vitest](https://vitest.dev/)
 
+```sh
+npm run test:unit
 ```
-src/
-  ├── components/     # 可复用组件
-  ├── pages/         # 页面组件
-  ├── services/      # API服务
-  ├── store/         # 状态管理
-  ├── types/         # TypeScript类型定义
-  ├── utils/         # 工具函数
-  └── App.tsx        # 应用入口
-``` 
+
+### Run End-to-End Tests with [Playwright](https://playwright.dev)
+
+```sh
+# Install browsers for the first run
+npx playwright install
+
+# When testing on CI, must build the project first
+npm run build
+
+# Runs the end-to-end tests
+npm run test:e2e
+# Runs the tests only on Chromium
+npm run test:e2e -- --project=chromium
+# Runs the tests of a specific file
+npm run test:e2e -- tests/example.spec.ts
+# Runs the tests in debug mode
+npm run test:e2e -- --debug
+```
+
+### Lint with [ESLint](https://eslint.org/)
+
+```sh
+npm run lint
+```
