@@ -17,20 +17,17 @@
     <!-- 第二部分：历史对话列表 -->
     <div class="history-chats">
       <el-menu
-        default-active="2"
+        :default-active="activeConversationId"
         class="el-menu-vertical-demo"
         @select="handleMenuSelect"
       >
-        <el-menu-item index="history-1">
-          <span>我的第一个对话</span>
+        <el-menu-item 
+          v-for="conversation in conversations" 
+          :key="conversation.conversation_id"
+          :index="conversation.conversation_id"
+        >
+          <span>{{ conversation.title }}</span>
         </el-menu-item>
-        <el-menu-item index="history-2">
-          <span>关于项目计划的讨论</span>
-        </el-menu-item>
-        <el-menu-item index="history-3">
-          <span>翻译助理问题</span>
-        </el-menu-item>
-        <!-- TODO: Dynamically generate historical chat items -->
       </el-menu>
     </div>
 
@@ -72,16 +69,74 @@
 <script setup lang="ts">
 import { ElButton, ElMenu, ElMenuItem, ElSubMenu, ElIcon, ElAvatar } from 'element-plus';
 import { Share, Plus } from '@element-plus/icons-vue';
+import { ref, onMounted, watch } from 'vue';
+import { getApiUrl } from '../config/api';
+import { useRouter } from 'vue-router';
+
+interface Conversation {
+  type: number;
+  id: number;
+  conversation_id: string;
+  user_id: number;
+  gmt_modified: string;
+  create_by: number;
+  title: string;
+  gmt_create: string;
+}
+
+interface ApiResponse {
+  data: Conversation[];
+  success: boolean;
+  code: number;
+  msg: string;
+}
+
+const router = useRouter();
+const conversations = ref<Conversation[]>([]);
+const activeConversationId = ref<string>('');
+
+const fetchConversations = async () => {
+  try {
+    const response = await fetch(getApiUrl('/api/conversation/list'), {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIyIiwiYXVkIjpbImZhc3RhcGktdXNlcnM6YXV0aCJdLCJleHAiOjE3NDk5NjExODR9.YQw7FN8PsSmGrSKHCpjoOQ_rIw9nQ8tXf81dClnS3Jk'
+      } ,
+    });
+    if (!response.ok) {
+      throw new Error('Failed to fetch conversations');
+    }
+    const result: ApiResponse = await response.json();
+    if (result.success && result.code === 0) {
+      conversations.value = result.data;
+      if (result.data.length > 0) {
+        activeConversationId.value = result.data[0].conversation_id;
+      }
+    } else {
+      throw new Error(result.msg || 'Failed to fetch conversations');
+    }
+  } catch (error) {
+    console.error('Error fetching conversations:', error);
+    // TODO: Add proper error handling/notification
+  }
+};
 
 const handleNewChat = () => {
   console.log('新建对话 clicked');
-  // TODO: Implement new chat logic
+  router.push('/chat');
 };
 
 const handleMenuSelect = (index: string, indexPath: string[]) => {
   console.log('Menu selected:', index, indexPath);
-  // TODO: Implement navigation logic based on selected menu item
+  activeConversationId.value = index;
+  // Navigate to the chat view with the selected conversation ID
+  router.push(`/chat/${index}`);
 };
+
+onMounted(() => {
+  fetchConversations();
+});
 </script>
 
 <style scoped>

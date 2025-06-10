@@ -62,3 +62,40 @@ npm run test:e2e -- --debug
 ```sh
 npm run lint
 ```
+
+# Environment Configuration
+
+## API Configuration
+
+The application uses environment variables to configure the API base URL. You can set these variables in different ways:
+
+### 1. Environment Files
+
+- `.env` - Default environment variables
+- `.env.production` - Production environment variables
+- `.env.development` - Development environment variables
+
+### 2. Build-time Configuration
+
+You can override the API base URL during build time using the `VITE_API_BASE_URL` environment variable:
+
+```bash
+# Development build
+npm run dev
+
+# Production build with custom API URL
+VITE_API_BASE_URL=https://api.example.com npm run build
+```
+
+### Default Values
+
+If no environment variable is specified, the application will use the default value:
+- Development: `http://127.0.0.1:7081`
+- Production: `http://api.example.com`
+
+## Configuration Files
+
+The API configuration is managed in `src/config/api.ts`. This file:
+- Defines the API configuration interface
+- Provides default values
+- Exports utility functions for API URL construction

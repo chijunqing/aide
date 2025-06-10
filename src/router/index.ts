@@ -22,6 +22,11 @@ const router = createRouter({
       name: 'chat-assistant',
       component: () => import('../views/ChatAssistantView.vue'),
     },
+    {
+      path: '/chat/:conversation_id',
+      name: 'chat-with-conversation',
+      component: () => import('../views/ChatAssistantView.vue'),
+    },
   ],
 })
 

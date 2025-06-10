@@ -3,10 +3,10 @@
     <!-- Message display area -->
     <el-main class="chat-messages">
       <div v-for="(message, index) in messages" :key="index" :class="['message', message.sender]">
-        <div class="message-content">
+        <div class="message-content" v-if="message.contents.length > 0 || message.isTyping">
           <div v-for="(block, i) in message.contents" :key="i">
-            <div v-if="block.type === 'think'" class="think-block">{{ block.text }}</div>
-            <span v-else v-html="block.text"></span>
+            <div v-if="block.type === 'think' && block.text" class="think-block">{{ block.text }}</div>
+            <div v-else-if="block.type === 'text' && block.text" class="message-text" v-html="block.text"></div>
           </div>
         </div>
       </div>
@@ -66,6 +66,11 @@
 import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue';
 import { ElContainer, ElMain, ElInput, ElButton, ElIcon, ElAvatar } from 'element-plus';
 import { Promotion, Plus, Setting, Microphone } from '@element-plus/icons-vue';
+import { getApiUrl } from '../config/api';
+import { useRoute } from 'vue-router';
+import { de } from 'element-plus/es/locales.mjs';
+
+
 
 interface MessageBlock {
   type: 'text' | 'think';
@@ -78,20 +83,39 @@ interface Message {
   isTyping?: boolean;
 }
 
+interface ChatRecord {
+  message_type: number;
+  message_id: string;
+  prompt: {
+    'sys.query': string;
+    'sys.conversation_id': string;
+  };
+  message: {
+    message: string;
+  };
+  query: string;
+  conversation_id: string;
+}
+
+const route = useRoute();
 const messages = ref<Message[]>([]);
 const inputMessage = ref<string>('');
 const messagesEndRef = ref<HTMLDivElement | null>(null);
-const chatInputRef = ref<HTMLDivElement | null>(null); // Ref for the contenteditable div
-const isFocused = ref(false); // To track focus for placeholder
-const isTyping = ref(false);  // 添加全局打字状态
-const typingSpeed = 30;  // 打字速度（毫秒）
+const chatInputRef = ref<HTMLDivElement | null>(null);
+const isFocused = ref(false);
+const isTyping = ref(false);
+const typingSpeed = 30;
+const currentConversationId = ref<string>('');
 
 let abortController: AbortController | null = null; // 用于取消 fetch 请求的 AbortController
 let isFirstChunk = true;
-let aiBuffer = '';
+
+
+
+let aiTextBuffer = '';
+let aiThinkBuffer = '';
 let typing = false;
 let inThinkBlock = false;
-let currentThinkText = '';
 
 // Function to scroll to the latest message
 const scrollToBottom = () => {
@@ -105,15 +129,134 @@ watch(messages, () => {
   scrollToBottom();
 }, { deep: true });
 
-// 移除 onMounted 中的 establishSSEConnection 调用
+// Function to parse message content and extract think blocks
+const parseMessageContent = (content: string): MessageBlock[] => {
+  const blocks: MessageBlock[] = [];
+  let currentText = '';
+  let inThinkBlock = false;
+  let thinkContent = '';
+
+  for (let i = 0; i < content.length; i++) {
+    if (content.substring(i, i + 7) === '<think>') {
+      if (currentText.trim()) {
+        blocks.push({ type: 'text', text: currentText.trim() });
+        currentText = '';
+      }
+      inThinkBlock = true;
+      i += 6; // Skip the <think> tag
+      continue;
+    }
+    if (content.substring(i, i + 8) === '</think>') {
+      if (thinkContent.trim()) {
+        blocks.push({ type: 'think', text: thinkContent.trim() });
+        thinkContent = '';
+      }
+      inThinkBlock = false;
+      i += 7; // Skip the </think> tag
+      continue;
+    }
+    // debugger;
+    if (inThinkBlock) {
+      thinkContent += content[i];
+      // debugger;
+    } else {
+      currentText += content[i];
+      // debugger;
+    }
+  }
+
+  if (currentText.trim()) {
+    blocks.push({ type: 'text', text: currentText.trim() });
+  }
+  if (thinkContent.trim()) {
+    blocks.push({ type: 'think', text: thinkContent.trim() });
+  }
+
+  return blocks;
+};
+
+// Function to load chat history
+const loadChatHistory = async (conversationId: string) => {
+  try {
+    const response = await fetch(getApiUrl(`/api/chat/record/list/${conversationId}`), {
+      headers: {
+        'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIyIiwiYXVkIjpbImZhc3RhcGktdXNlcnM6YXV0aCJdLCJleHAiOjE3NDk5NjExODR9.YQw7FN8PsSmGrSKHCpjoOQ_rIw9nQ8tXf81dClnS3Jk'
+      }
+    });
+
+    if (!response.ok) {
+      console.error('Failed to load chat history:', response.status);
+      return;
+    }
+
+    const data = await response.json();
+    if (data.success && data.data) {
+      // Clear existing messages
+      messages.value = [];
+      
+      // Process each record
+      data.data.forEach((record: ChatRecord) => {
+        // Add user message
+        messages.value.push({
+          contents: [{ type: 'text', text: record.query }],
+          sender: 'user'
+        });
+
+        // Add AI message
+        if (record.message && record.message.message) {
+          let aiRawMessage = record.message.message;
+
+          // Normalize <br> tags to \n, then normalize newlines and trim whitespace from AI response
+          aiRawMessage = aiRawMessage.replace(/<br\s*\/?>/gi, '\n').replace(/\n+/g, '\n').trim();
+
+          // Check if AI response starts with user's query (potentially echoed by AI)
+          // and remove it to prevent duplicate display of user query on AI side.
+          if (aiRawMessage.startsWith(record.query.trim())) {
+            aiRawMessage = aiRawMessage.substring(record.query.trim().length).trim();
+          }
+
+          const aiMessage: Message = {
+            contents: parseMessageContent(aiRawMessage),
+            sender: 'ai'
+          };
+          messages.value.push(aiMessage);
+        }
+      });
+
+      // Set current conversation ID
+      currentConversationId.value = conversationId;
+      
+      // Scroll to bottom after loading history
+      scrollToBottom();
+    }
+  } catch (error) {
+    console.error('Error loading chat history:', error);
+  }
+};
+
+// Watch for route changes to load chat history when conversation_id changes
+watch(
+  () => route.params.conversation_id,
+  (newConversationId) => {
+    if (newConversationId) {
+      loadChatHistory(newConversationId as string);
+    }
+  },
+  { immediate: true }
+);
+
 onMounted(() => {
-  
+  // Initial load of chat history if conversation_id is present
+  const conversationId = route.params.conversation_id as string;
+  if (conversationId) {
+    loadChatHistory(conversationId);
+  }
 });
 
 onUnmounted(() => {
   // 在组件卸载时取消 fetch 请求，关闭连接
   if (abortController) {
-    abortController.abort();
+    (abortController as AbortController).abort(); // Type assertion to resolve linter error
     console.log('SSE fetch connection aborted.');
   }
   // 停止所有正在进行的打字效果
@@ -125,27 +268,48 @@ onUnmounted(() => {
   isTyping.value = false;
 });
 
-// 打字机效果函数
-const typeWriter = async (message: Message) => {
+const typeWriter = async (message: Message, blockType: 'text' | 'think') => {
+  if (typing) return; // 防止并发打字
+  
   typing = true;
   message.isTyping = true;
   isTyping.value = true;
+  
   const index = messages.value.indexOf(message);
   if (index === -1) return;
-  while (aiBuffer.length > 0) {
-    if (
-      messages.value[index].contents.length === 0 ||
-      messages.value[index].contents[messages.value[index].contents.length - 1].type !== 'text'
-    ) {
-      messages.value[index].contents.push({ type: 'text', text: '' });
+
+  const blocks = messages.value[index].contents;
+  const buffer = blockType === 'text' ? aiTextBuffer : aiThinkBuffer;
+
+  if (buffer.length > 0) {
+    // 确保当前块类型正确
+    if (blocks.length === 0) {
+      blocks.push({ type: blockType, text: '' });
+    } else if (blocks[blocks.length - 1].type !== blockType) {
+      // 如果最后一个块不是当前类型，创建新块
+      blocks.push({ type: blockType, text: '' });
     }
-    messages.value[index].contents[messages.value[index].contents.length - 1].text += aiBuffer[0];
-    aiBuffer = aiBuffer.slice(1);
-    await new Promise(resolve => setTimeout(resolve, typingSpeed));
-    scrollToBottom();
+
+    const targetBlock = blocks[blocks.length - 1];
+    
+    // 逐字添加内容
+    for (let i = 0; i < buffer.length; i++) {
+      targetBlock.text += buffer[i];
+      await new Promise(resolve => setTimeout(resolve, typingSpeed));
+      scrollToBottom();
+    }
+
+    // 清空对应的缓冲区
+    if (blockType === 'text') {
+      aiTextBuffer = '';
+    } else {
+      aiThinkBuffer = '';
+    }
   }
+
   message.isTyping = false;
   isTyping.value = false;
+  typing = false;
 };
 
 // Modified sendMessage to send POST request and handle SSE response stream
@@ -164,26 +328,40 @@ const sendMessage = async () => {
   }
 
   // Add a placeholder AI message
-  const aiMessage: Message = { contents: [], sender: 'ai', isTyping: false };
+  const aiMessage: Message = {
+    contents: [],
+    sender: 'ai',
+    isTyping: false
+  };
   messages.value.push(aiMessage);
 
-  aiBuffer = '';
+  // 重置所有状态
+  aiTextBuffer = '';
+  aiThinkBuffer = '';
   typing = false;
   inThinkBlock = false;
-  currentThinkText = '';
+
+  // Initialize a new AbortController for each request
+  if (abortController) {
+    // If a previous request is still active, abort it
+    abortController.abort();
+  }
+  abortController = new AbortController(); // Create a new AbortController
+  const signal = abortController.signal; // Get the signal for the fetch request
 
   try {
     console.log('Sending message to backend via POST and attempting to read SSE stream from response...');
-    const response = await fetch('http://127.0.0.1:7081/api/chat', {
+    const response = await fetch(getApiUrl('/api/chat'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIyIiwiYXVkIjpbImZhc3RhcGktdXNlcnM6YXV0aCJdLCJleHAiOjE3NDk5NjExODR9.YQw7FN8PsSmGrSKHCpjoOQ_rIw9nQ8tXf81dClnS3Jk'
       },
       body: JSON.stringify({
-        "conversation_id": "",
+        "conversation_id": currentConversationId.value,
         "query": userMessageText
       }),
+      signal: signal, // Pass the signal here
     });
 
     if (!response.ok) {
@@ -203,7 +381,6 @@ const sendMessage = async () => {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    let fullResponse = '';
 
     while (true) {
       const { value, done } = await reader.read();
@@ -219,45 +396,70 @@ const sendMessage = async () => {
       for (const eventString of events) {
         if (!eventString) continue;
 
-        // 直接处理 data 开头的行
         if (eventString.startsWith('data: ')) {
           try {
             const jsonStr = eventString.substring('data: '.length);
             const data = JSON.parse(jsonStr);
-            // console.log('Parsed SSE data:', data);
 
             if (data.event === 'message' && typeof data.data === 'string') {
-              const innerData = JSON.parse(data.data);
+              console.log('data.data:', data.data);
+              let innerData;
+              try {
+                innerData = JSON.parse(data.data);
+              } catch (e) {
+                innerData = { message: data.data };
+              }
+              
+              if (data.conversation_id) {
+                currentConversationId.value = data.conversation_id;
+              }
 
               if (typeof innerData.message === 'string') {
-                let aiMessageContent = innerData.message;
-                // 处理 think 块
-                if (aiMessageContent.includes('<think>')) {
-                  inThinkBlock = true;
-                  aiMessageContent = aiMessageContent.replace('<think>', '');
-                }
-                if (aiMessageContent.includes('</think>')) {
-                  inThinkBlock = false;
-                  aiMessageContent = aiMessageContent.replace('</think>', '');
-                  currentThinkText += aiMessageContent;
-                  // 推送 think 块
-                  const index = messages.value.indexOf(aiMessage);
-                  if (index !== -1 && currentThinkText.trim() !== '') {
-                    messages.value[index].contents.push({ type: 'think', text: currentThinkText });
+                // Normalize <br> tags to \n, then normalize newlines and trim whitespace from the incoming message data
+                innerData.message = innerData.message.replace(/<br\s*\/?>/gi, '\n').replace(/\n+/g, '\n').trim();
+
+                const parts = innerData.message.split(/(<think>|<\/think>)/g);
+                
+                for (const part of parts) {
+                  if (part === '<think>') {
+                    // 确保之前的文本内容被处理
+                    if (aiTextBuffer && !typing) {
+                      await typeWriter(aiMessage, 'text');
+                    }
+                    inThinkBlock = true;
+                  } else if (part === '</think>') {
+                    // 确保思考内容被处理
+                    if (aiThinkBuffer && !typing) {
+                      await typeWriter(aiMessage, 'think');
+                    }
+                    inThinkBlock = false;
+                  } else if (part !== '') {
+                    if (inThinkBlock) {
+                      aiThinkBuffer += part;
+                      // 如果积累了一定量的内容，就立即显示
+                      if (aiThinkBuffer.length > 10 && !typing) {
+                        await typeWriter(aiMessage, 'think');
+                      }
+                    } else {
+                      aiTextBuffer += part;
+                      // 如果积累了一定量的内容，就立即显示
+                      if (aiTextBuffer.length > 10 && !typing) {
+                        await typeWriter(aiMessage, 'text');
+                      }
+                    }
                   }
-                  currentThinkText = '';
-                  continue;
                 }
-                if (inThinkBlock) {
-                  currentThinkText += aiMessageContent;
-                } else {
-                  aiBuffer += aiMessageContent;
-                  if (!typing) typeWriter(aiMessage);
-                }
-              } else if (data.event === 'done') {
-                console.log('SSE stream finished (done event received)');
-                break;
               }
+            } else if (data.event === 'done') {
+              // 处理最后可能剩余的缓冲区内容
+              if (aiThinkBuffer && !typing) {
+                await typeWriter(aiMessage, 'think');
+              }
+              if (aiTextBuffer && !typing) {
+                await typeWriter(aiMessage, 'text');
+              }
+              console.log('SSE stream finished (done event received)');
+              break;
             }
           } catch (error) {
             console.error('Error parsing SSE data:', error);
@@ -267,6 +469,10 @@ const sendMessage = async () => {
     }
   } catch (error) {
     console.error('Error in sendMessage:', error);
+    // Ensure the message object exists before pushing error
+    if (!aiMessage.contents) {
+        aiMessage.contents = [];
+    }
     aiMessage.contents.push({ type: 'text', text: 'Error: Failed to communicate with the server.' });
   }
 };
@@ -450,15 +656,18 @@ const handleKeyPress = (e: KeyboardEvent) => {
 
 .message .message-content {
    display: flex;
-   flex-direction: column; /* 关键：垂直排列 */
    align-items: flex-start;
+   flex-wrap: wrap; /* Allow content to wrap */
+}
+
+.message.user .message-content {
+  max-width: 75%; /* Limit user message bubble width */
 }
 
 .message p {
-  max-width: 75%;
   padding: 10px 14px;
   border-radius: 8px;
-  line-height: 1.5;
+  line-height: 1.0; /* Adjusted for tighter spacing */
   word-wrap: break-word;
   box-shadow: none;
   white-space: pre-wrap;
@@ -491,6 +700,7 @@ const handleKeyPress = (e: KeyboardEvent) => {
 
 .message.ai .message-content {
   position: relative;
+  flex-direction: column; /* Ensure AI content stacks vertically */
 }
 
 .message.ai .typing-indicator {
@@ -509,5 +719,29 @@ const handleKeyPress = (e: KeyboardEvent) => {
   padding: 8px 12px;
   border-radius: 4px;
   font-style: italic;
+  width: 100%;
+}
+
+.message-text {
+  background-color: #f0f0f0;
+  padding: 10px 14px;
+  border-radius: 8px;
+  line-height: 1.0; /* Adjusted for tighter spacing */
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+.message.user .message-text {
+  background-color: #dcf8c6;
+  color: #000;
+  border-bottom-right-radius: 2px;
+  width: 100%; /* Ensure it takes full width of its parent content box */
+}
+
+.message.ai .message-text {
+  background-color: #f0f0f0;
+  color: #000;
+  border-bottom-left-radius: 2px;
 }
 </style> 
